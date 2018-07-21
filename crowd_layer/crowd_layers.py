@@ -5,6 +5,7 @@ import keras
 from keras import backend as K
 from keras.engine.topology import Layer
 from keras.layers import merge, Dense, Reshape
+from keras.layers import Activation, Dropout, Flatten, Dense, merge, Reshape, Permute, Multiply, Dot,dot, Concatenate, Add
 
 
 def init_identities(shape, dtype=None):
@@ -65,6 +66,7 @@ class CrowdsClassification(Layer):
             print(x)
             print(self.kernel)
             res = K.dot(x, self.kernel)
+            print(res)
         elif self.conn_type == "VW" or self.conn_type == "VB" or self.conn_type == "VW+B" or self.conn_type == "SW":
             out = []
             for r in range(self.num_annotators):
@@ -90,124 +92,6 @@ class CrowdsClassification(Layer):
 
     def compute_output_shape(self, input_shape):
         return (input_shape[0], self.output_dim, self.num_annotators)
-
-
-class ChannelMatrix(object):
-
-    def __init__(self, output_dim, num_annotators, num_classes, model="complex", W=0,  **kwargs):
-        self.output_dim = output_dim
-        self.num_annotators = num_annotators
-        self.num_classes = num_classes
-        self.MODEL = model
-        self.W = W
-
-    def compute_channel_matrix(self, x, bias_weights=None):
-        if bias_weights == None:
-            bias_weights = init_bias(self.num_classes, self.num_annotators)
-        for w in range(self.num_annotators):
-            if self.MODEL == 'simple':
-                # use bias=False and ones[:,:1] (and not bias=True and zeros) because we
-                #  dont really need both bias and weights and there is no simple way to
-                #  throwaway the weights
-                channel_matrix = [Dense(self.num_classes,
-                                        activation='softmax',
-                                        bias=False,
-                                        name='dense_class%d' % i,
-                                        trainable=True,
-                                        weights=[
-                                            bias_weights[i].reshape((1, -1))
-                                        ])(ones)
-                                  for i in range(self.num_classes)]
-            elif self.MODEL == 'complex':
-                channel_matrix = [Dense(self.num_classes,
-                                        activation='softmax',
-                                        name='dense_class%d' % i,
-                                        weights=[
-                                            self.W * (np.random.random((nhidden, self.num_classes)) - 0.5),
-                                            bias_weights[i]
-                                        ])(x)
-                                  for i in range(self.num_classes)]
-            else:
-                raise Exception("Unknown model type for ChannelMatrix layer!")
-            channel_matrix = merge(channel_matrix, mode='concat')
-            channel_matrix = Reshape((self.num_classes, self.num_classes))(channel_matrix)
-
-        return channel_matrix
-
-
-class CrowdsClassificationWithSoftmaxAdaptation(CrowdsClassification):
-
-    def __init__(self, output_dim, num_annotators, init_channel_matrix, conn_type="MW", **kwargs):
-        self.output_dim = output_dim
-        self.num_annotators = num_annotators
-        self.conn_type = conn_type
-        super(CrowdsClassification, self).__init__(**kwargs)
-
-    def build(self, input_shape):
-        if self.conn_type == "MW":
-            # matrix of weights per annotator
-            self.kernel = self.add_weight("CrowdLayer", (self.output_dim, self.output_dim, self.num_annotators),
-                                            initializer=self.init_channel_matrix,
-                                            trainable=True)
-        # elif self.conn_type == "VW":
-        #     # vector of weights (one scale per class) per annotator
-        #     self.kernel = self.add_weight("CrowdLayer", (self.output_dim, self.num_annotators),
-        #                                     initializer=keras.initializers.Ones(),
-        #                                     trainable=True)
-        # elif self.conn_type == "VB":
-        #     # two vectors of weights (one scale and one bias per class) per annotator
-        #     self.kernel = []
-        #     self.kernel.append(self.add_weight("CrowdLayer", (self.output_dim, self.num_annotators),
-        #                                     initializer=keras.initializers.Zeros(),
-        #                                     trainable=True))
-        # elif self.conn_type == "VW+B":
-        #     # two vectors of weights (one scale and one bias per class) per annotator
-        #     self.kernel = []
-        #     self.kernel.append(self.add_weight("CrowdLayer", (self.output_dim, self.num_annotators),
-        #                                     initializer=keras.initializers.Ones(),
-        #                                     trainable=True))
-        #     self.kernel.append(self.add_weight("CrowdLayer", (self.output_dim, self.num_annotators),
-        #                                     initializer=keras.initializers.Zeros(),
-        #                                     trainable=True))
-        # elif self.conn_type == "SW":
-        #     # single weight value per annotator
-        #     self.kernel = self.add_weight("CrowdLayer", (self.num_annotators,1),
-        #                                     initializer=keras.initializers.Ones(),
-        #                                     trainable=True)
-        else:
-            raise Exception("Unknown connection type for CrowdsClassification layer!")
-
-        super(CrowdsClassification, self).build(input_shape)  # Be sure to call this somewhere!
-
-    def call(self, x):
-        if self.conn_type == "MW":
-            res = K.dot(x, self.kernel)
-    #     elif self.conn_type == "VW" or self.conn_type == "VB" or self.conn_type == "VW+B" or self.conn_type == "SW":
-    #         out = []
-    #         for r in range(self.num_annotators):
-    #             if self.conn_type == "VW":
-    #                 out.append(x * self.kernel[:,r])
-    #             elif self.conn_type == "VB":
-    #                 out.append(x + self.kernel[0][:,r])
-    #             elif self.conn_type == "VW+B":
-    #                 out.append(x * self.kernel[0][:,r] + self.kernel[1][:,r])
-    #             elif self.conn_type == "SW":
-    #                 out.append(x * self.kernel[r,0])
-    #         res = tf.stack(out)
-    #         if len(res.shape) == 3:
-    #             res = tf.transpose(res, [1, 2, 0])
-    #         elif len(res.shape) == 4:
-    #             res = tf.transpose(res, [1, 2, 3, 0])
-    #         else:
-    #             raise Exception("Wrong number of dimensions for output")
-        else:
-            raise Exception("Unknown connection type for CrowdsClassification layer!")
-
-        return res
-
-    def compute_output_shape(self, input_shape):
-        return (input_shape[0], self.output_dim, self.num_annotators)
-
 
 
 class CrowdsRegression(Layer):
@@ -482,4 +366,188 @@ class CrowdsAggregationCallback(keras.callbacks.Callback):
         # run M-step
         self.model.pi = self.loss.m_step()
 
+
+APRIOR_NOISE=0.46
+N_CLASSES=8
+bias_weights = (
+    np.array([np.array([np.log(1. - APRIOR_NOISE)
+                        if i == j else
+                        np.log(APRIOR_NOISE / (N_CLASSES - 1.))
+                        for j in range(N_CLASSES)]) for i in
+              range(N_CLASSES)])
+    + 0.01 * np.random.random((N_CLASSES, N_CLASSES)))
+# bias_weights = np.repeat(bias_weights, N_ANNOT, axis=1)
+
+
+def init_bias(shape, dtype=None):
+    out = np.zeros(shape)
+    for r in range(shape[2]):
+        for i in range(shape[0]):
+            out[:,:,r] = bias_weights
+    return out
+
+
+def init_weight(shape, dtype=None):
+    W = 0
+    out = W*(np.random.random(shape) - 0.5)
+    return out
+
+
+class CrowdsClassificationSModel(Layer):
+
+    def __init__(self, output_dim, num_annotators, conn_type="MW", **kwargs):
+        self.output_dim = output_dim
+        self.num_annotators = num_annotators
+        self.conn_type = conn_type
+        super(CrowdsClassificationSModel, self).__init__(**kwargs)
+
+    def build(self, input_shape):
+        if self.conn_type == "MW":
+            # matrix of weights per annotator
+            self.kernel = []
+            self.kernel.append(self.add_weight("CrowdLayer", (self.output_dim, self.output_dim, self.num_annotators),
+                                initializer=init_bias,
+                                trainable=True))
+        else:
+            raise Exception("Unknown connection type for CrowdsClassification layer!")
+
+        super(CrowdsClassificationSModel, self).build(input_shape)  # Be sure to call this somewhere!
+
+    def call(self, inputs):
+        if self.conn_type == "MW":
+            print('inputs: ', inputs)
+            print('weights: ', self.kernel)
+            channel_output_l = []
+            for r in range(self.num_annotators):
+                channel_matrix_w = self.kernel[0][:,:,r]
+                channel_matrix_w_l = []
+                for c in range(self.output_dim):
+                    channel_matrix_w_c = K.softmax(channel_matrix_w[c,:])
+                    channel_matrix_w_l.append(channel_matrix_w_c)
+                channel_matrix_w = tf.stack(channel_matrix_w_l)
+                channel_output_w = K.dot(inputs[1], channel_matrix_w)
+                channel_output_w = K.dropout(channel_output_w, 0.4)
+                channel_output_l.append(channel_output_w)
+            channel_output = tf.stack(channel_output_l)
+            channel_output = K.permute_dimensions(channel_output, (1,2,0))
+
+#             res = K.batch_dot(inputs[1], channel_matrix)
+        else:
+            raise Exception("Unknown connection type for CrowdsClassification layer!")
+
+        return channel_output
+
+    def compute_output_shape(self, input_shape):
+        return (input_shape[1][0], self.output_dim, self.num_annotators)
+
+# Complex Model
+class CrowdsClassificationCModel(Layer):
+
+    def __init__(self, output_dim, num_annotators, conn_type="MW", **kwargs):
+        self.output_dim = output_dim
+        self.num_annotators = num_annotators
+        self.conn_type = conn_type
+        super(CrowdsClassificationCModel, self).__init__(**kwargs)
+
+    def build(self, input_shape):
+        if self.conn_type == "MW":
+            # matrix of weights per annotator
+            self.kernel = []
+            self.kernel.append(self.add_weight("CrowdLayer", (128, self.output_dim*self.output_dim, self.num_annotators),
+                                initializer=init_weight,
+                                trainable=True))
+            self.kernel.append(self.add_weight("CrowdLayer", (self.output_dim, self.output_dim, self.num_annotators),
+                                initializer=init_bias,
+                                trainable=True))
+        else:
+            raise Exception("Unknown connection type for CrowdsClassification layer!")
+
+        super(CrowdsClassificationCModel, self).build(input_shape)  # Be sure to call this somewhere!
+
+    def call(self, inputs):
+        if self.conn_type == "MW":
+            print('inputs: ', inputs)
+            print('weights: ', self.kernel)
+            channel_output_l = []
+            for r in range(self.num_annotators):
+                dot_p = K.dot(inputs[0], self.kernel[0][:,:,r])
+                dot_p = K.reshape(dot_p, (-1, 8, 8))
+                channel_matrix_w = dot_p + self.kernel[1][:,:,r]
+#                 channel_matrix_w = self.kernel[0][:,:,r]
+                channel_matrix_w_l = []
+                for c in range(self.output_dim):
+                    channel_matrix_w_c = K.softmax(channel_matrix_w[:,c,:])
+                    channel_matrix_w_l.append(channel_matrix_w_c)
+                channel_matrix_w = tf.stack(channel_matrix_w_l)
+                channel_matrix_w = K.permute_dimensions(channel_matrix_w, (1,0,2))
+                channel_output_w = K.batch_dot(inputs[1], channel_matrix_w)
+                channel_output_w = K.dropout(channel_output_w, 0.5)
+                channel_output_l.append(channel_output_w)
+
+            channel_output = tf.stack(channel_output_l)
+            channel_output = K.permute_dimensions(channel_output, (1,2,0))
+        else:
+            raise Exception("Unknown connection type for CrowdsClassification layer!")
+
+        return channel_output
+
+    def compute_output_shape(self, input_shape):
+        return (input_shape[1][0], self.output_dim, self.num_annotators)
+
+
+class CrowdsClassificationCModelSingleWeight(Layer):
+
+    def __init__(self, output_dim, num_annotators, conn_type="MW", **kwargs):
+        self.output_dim = output_dim
+        self.num_annotators = num_annotators
+        self.conn_type = conn_type
+        super(CrowdsClassificationCModelSingleWeight, self).__init__(**kwargs)
+
+    def build(self, input_shape):
+        if self.conn_type == "MW":
+            # matrix of weights per annotator
+            self.kernel = []
+            self.kernel.append(self.add_weight("CrowdLayer", (64, self.output_dim*self.output_dim),
+                                initializer=init_weight,
+                                trainable=True))
+            self.kernel.append(self.add_weight("CrowdLayer", (self.output_dim, self.output_dim, self.num_annotators),
+                                initializer=init_bias,
+                                trainable=True))
+        else:
+            raise Exception("Unknown connection type for CrowdsClassification layer!")
+
+        super(CrowdsClassificationCModelSingleWeight, self).build(input_shape)  # Be sure to call this somewhere!
+
+    def call(self, inputs):
+        if self.conn_type == "MW":
+            print('inputs: ', inputs)
+            print('weights: ', self.kernel)
+            channel_output_l = []
+            for r in range(self.num_annotators):
+                dot_p = K.dot(inputs[0], self.kernel[0][:,:])
+                dot_p = K.reshape(dot_p, (-1, 8, 8))
+                channel_matrix_w = dot_p + self.kernel[1][:,:,r]
+#                 channel_matrix_w = self.kernel[0][:,:,r]
+                channel_matrix_w_l = []
+                for c in range(self.output_dim):
+                    channel_matrix_w_c = K.softmax(channel_matrix_w[:,c,:])
+                    channel_matrix_w_l.append(channel_matrix_w_c)
+                channel_matrix_w = tf.stack(channel_matrix_w_l)
+                channel_matrix_w = K.permute_dimensions(channel_matrix_w, (1,0,2))
+                channel_output_w = K.batch_dot(inputs[1], channel_matrix_w)
+                channel_output_w = K.dropout(channel_output_w, 0.3)
+                channel_output_l.append(channel_output_w)
+
+
+            channel_output = tf.stack(channel_output_l)
+            channel_output = K.permute_dimensions(channel_output, (1,2,0))
+
+#             res = K.batch_dot(inputs[1], channel_matrix)
+        else:
+            raise Exception("Unknown connection type for CrowdsClassification layer!")
+
+        return channel_output
+
+    def compute_output_shape(self, input_shape):
+        return (input_shape[1][0], self.output_dim, self.num_annotators)
 
