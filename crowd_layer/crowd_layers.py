@@ -149,12 +149,148 @@ class CrowdsRegression(Layer):
 class MaskedMultiCrossEntropy(object):
 
     def loss(self, y_true, y_pred):
+        print('y_true: ', y_true)
+        print('y_pred: ', y_pred)
         vec = tf.nn.softmax_cross_entropy_with_logits(logits=y_pred, labels=y_true, dim=1)
         mask = tf.equal(y_true[:,0,:], -1)
         zer = tf.zeros_like(vec)
         loss = tf.where(mask, x=zer, y=vec)
         return loss
 
+
+# convenience l2_norm function
+def l2_norm(x, axis=None):
+    """
+    takes an input tensor and returns the l2 norm along specified axis
+    """
+
+    square_sum = K.sum(K.square(x), axis=axis, keepdims=True)
+    norm = K.sqrt(K.maximum(square_sum, K.epsilon()))
+
+    return norm
+
+
+def pairwise_cosine_sim(A, B):
+    """
+    A [batch x d] tensor of n rows with d dimensions
+    B [batch x d x m] tensor of n rows with d dimensions
+
+    returns:
+    D [batch x m] tensor of cosine similarity scores between each point i<n, j<m
+    """
+
+    print('cosine sim A: ', A)
+    print('cosine sim B: ', B)
+
+    A = K.reshape(A, [-1, 1, 8])
+    A_mag = l2_norm(A, axis=2)
+    B_mag = l2_norm(B, axis=1)
+    num = K.batch_dot(A, B)
+    den = (A_mag * B_mag)
+    dist_mat = num / den
+    dist_mat = K.squeeze(dist_mat, axis=1)
+
+    print('dist_mat: ', dist_mat)
+
+    return dist_mat
+
+
+class MaskedMultiCrossEntropyCosSim(object):
+
+    def __init__(self, y_pred_clean):
+        self.y_pred_clean = y_pred_clean
+
+    def loss(self, y_true, y_pred):
+        vec = tf.nn.softmax_cross_entropy_with_logits(logits=y_pred, labels=y_true, dim=1)
+        mask = tf.equal(y_true[:,0,:], -1)
+        cos_sim = pairwise_cosine_sim(self.y_pred_clean, y_pred)
+        cos_sim = 1 - tf.divide(cos_sim, tf.reshape(tf.reduce_sum(cos_sim, axis=1), [-1, 1]))
+        zer = tf.zeros_like(vec)
+        cos_sim = tf.where(mask, x=zer, y=cos_sim)
+        loss = tf.where(mask, x=zer, y=vec)
+        loss = tf.add(loss, cos_sim)
+        return loss
+
+class MaskedMultiCrossEntropyBaseChannel(object):
+
+    def __init__(self, y_pred_clean):
+        self.y_pred_clean = y_pred_clean
+        self.y_pred_broad = tf.reshape(tf.tile(y_pred_clean, [1, 59]), [-1, 8, 59])
+
+    def loss(self, y_true, y_pred):
+
+        vec = tf.nn.softmax_cross_entropy_with_logits(logits=y_pred, labels=y_true, dim=1)
+        vec_base_channel = tf.nn.softmax_cross_entropy_with_logits(logits=y_pred, labels=self.y_pred_broad, dim=1)
+        mask = tf.equal(y_true[:,0,:], -1)
+
+        zer = tf.zeros_like(vec)
+        loss_base_channel = tf.where(mask, x=zer, y=vec_base_channel)
+        loss = tf.where(mask, x=zer, y=vec)
+        loss = tf.add(loss, loss_base_channel)
+        return loss
+
+
+class MaskedMultiCrossEntropyBaseChannelConst(object):
+
+    def __init__(self, y_pred_clean, const):
+        self.y_pred_clean = y_pred_clean
+        self.y_pred_broad = tf.reshape(tf.tile(y_pred_clean, [1, 59]), [-1, 8, 59])
+        self.const = const
+
+    def loss(self, y_true, y_pred):
+
+        vec = tf.nn.softmax_cross_entropy_with_logits(logits=y_pred, labels=y_true, dim=1)
+        vec_base_channel = tf.nn.softmax_cross_entropy_with_logits(logits=y_pred, labels=self.y_pred_broad, dim=1)
+        mask = tf.equal(y_true[:,0,:], -1)
+
+        zer = tf.zeros_like(vec)
+        loss_base_channel = self.const * tf.where(mask, x=zer, y=vec_base_channel)
+        loss = tf.where(mask, x=zer, y=vec)
+        loss = tf.add(loss, loss_base_channel)
+        return loss
+
+
+class MaskedMultiCrossEntropyCurriculum(object):
+
+    def __init__(self, y_pred_clean, const):
+        self.y_pred_clean = y_pred_clean
+        self.y_pred_broad = tf.reshape(tf.tile(y_pred_clean, [1, 59]), [-1, 8, 59])
+        self.const = const
+
+    def loss(self, y_true, y_pred):
+
+        vec = tf.nn.softmax_cross_entropy_with_logits(logits=y_pred, labels=y_true, dim=1)
+        vec_base_channel = tf.nn.softmax_cross_entropy_with_logits(logits=y_pred, labels=self.y_pred_broad, dim=1)
+        mask = tf.equal(y_true[:,0,:], -1)
+
+        zer = tf.zeros_like(vec)
+        loss_base_channel = self.const * tf.where(mask, x=zer, y=vec_base_channel)
+        loss = tf.where(mask, x=zer, y=vec)
+        loss = tf.add(loss, loss_base_channel)
+        return loss
+
+
+class MaskedMultiCrossEntropyCurriculumChannelMatrix(object):
+
+    def __init__(self, t, a, b):
+        self.t = t
+        self.a = a
+        self.b = b
+
+    def loss(self, y_true, y_pred):
+
+        vec = tf.nn.softmax_cross_entropy_with_logits(logits=y_pred, labels=y_true, dim=1)
+        # vec_base_channel = tf.nn.softmax_cross_entropy_with_logits(logits=y_pred, labels=self.y_pred_broad, dim=1)
+        trace = tf.trace(self.t)
+        print('vec: ', vec)
+        print('trace: ', trace)
+        vec = vec + trace * self.b
+
+        mask = tf.equal(y_true[:,0,:], -1)
+
+        zer = tf.zeros_like(vec)
+        loss = tf.where(mask, x=zer, y=vec)
+        return loss
 
 class MaskedMultiMSE(object):
 
@@ -440,6 +576,63 @@ class CrowdsClassificationSModel(Layer):
     def compute_output_shape(self, input_shape):
         return (input_shape[1][0], self.output_dim, self.num_annotators)
 
+
+
+class CrowdsClassificationSModelChannelMatrix(Layer):
+
+    def __init__(self, output_dim, num_annotators, conn_type="MW", **kwargs):
+        self.output_dim = output_dim
+        self.num_annotators = num_annotators
+        self.conn_type = conn_type
+        super(CrowdsClassificationSModelChannelMatrix, self).__init__(**kwargs)
+
+    def build(self, input_shape):
+        if self.conn_type == "MW":
+            # matrix of weights per annotator
+            self.kernel = []
+            self.kernel.append(self.add_weight("CrowdLayer", (self.output_dim, self.output_dim, self.num_annotators),
+                                initializer=init_bias,
+                                trainable=True))
+        else:
+            raise Exception("Unknown connection type for CrowdsClassification layer!")
+
+        super(CrowdsClassificationSModelChannelMatrix, self).build(input_shape)  # Be sure to call this somewhere!
+
+    def call(self, inputs):
+        if self.conn_type == "MW":
+            print('inputs: ', inputs)
+            print('weights: ', self.kernel)
+            channel_output_l = []
+            channel_matrix_l = []
+            for r in range(self.num_annotators):
+                channel_matrix_w = self.kernel[0][:,:,r]
+                channel_matrix_w_l = []
+                for c in range(self.output_dim):
+                    channel_matrix_w_c = K.softmax(channel_matrix_w[c,:])
+                    channel_matrix_w_l.append(channel_matrix_w_c)
+                channel_matrix_w = tf.stack(channel_matrix_w_l)
+                channel_matrix_l.append(channel_matrix_w)
+                channel_output_w = K.dot(inputs[1], channel_matrix_w)
+                channel_output_w = K.dropout(channel_output_w, 0.4)
+                channel_output_l.append(channel_output_w)
+            channel_matrix = tf.stack(channel_matrix_l)
+            channel_output = tf.stack(channel_output_l)
+            channel_output = K.permute_dimensions(channel_output, (1,2,0))
+            self.channel_matrix = channel_matrix
+
+#             res = K.batch_dot(inputs[1], channel_matrix)
+        else:
+            raise Exception("Unknown connection type for CrowdsClassification layer!")
+
+        return channel_output
+
+    def get_channel_matrix(self):
+        return self.channel_matrix
+
+    def compute_output_shape(self, input_shape):
+        return (input_shape[1][0], self.output_dim, self.num_annotators)
+
+
 # Complex Model
 class CrowdsClassificationCModel(Layer):
 
@@ -537,7 +730,6 @@ class CrowdsClassificationCModelSingleWeight(Layer):
                 channel_output_w = K.batch_dot(inputs[1], channel_matrix_w)
                 channel_output_w = K.dropout(channel_output_w, 0.3)
                 channel_output_l.append(channel_output_w)
-
 
             channel_output = tf.stack(channel_output_l)
             channel_output = K.permute_dimensions(channel_output, (1,2,0))

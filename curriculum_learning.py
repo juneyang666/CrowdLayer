@@ -13,7 +13,9 @@ import keras as keras
 
 # packages for learning from crowds
 from crowd_layer.crowd_layers import CrowdsClassification, MaskedMultiCrossEntropy, CrowdsClassificationSModel, \
-    CrowdsClassificationCModelSingleWeight, CrowdsClassificationCModel
+    CrowdsClassificationCModelSingleWeight, CrowdsClassificationCModel, MaskedMultiCrossEntropyCosSim, \
+    MaskedMultiCrossEntropyBaseChannel, MaskedMultiCrossEntropyBaseChannelConst, CrowdsClassificationSModelChannelMatrix, \
+    MaskedMultiCrossEntropyCurriculumChannelMatrix
 from crowd_layer.crowd_aggregators import CrowdsCategoricalAggregator
 
 
@@ -23,11 +25,11 @@ config.gpu_options.allow_growth=True
 sess = tf.Session(config=config)
 
 model = 'B'
-NUM_RUNS = 20
+NUM_RUNS = 30
 DATA_PATH = "/Users/yangyajing/Documents/noisy_dataset/LabelMe/prepared/"
 N_CLASSES = 8
 BATCH_SIZE = 64
-N_EPOCHS = 30
+N_EPOCHS = 20
 W = 0
 
 
@@ -139,27 +141,37 @@ last_hidden = hidden_layers(train_inputs)
 baseline_output = Dense(N_CLASSES, activation='softmax', name='baseline')(last_hidden)
 
 if model == 'B':
-    channeled_output = CrowdsClassificationSModel(N_CLASSES, N_ANNOT)([last_hidden, baseline_output])
+    channel_layer = CrowdsClassificationSModelChannelMatrix(N_CLASSES, N_ANNOT)
 elif model == 'SW+B':
-    channeled_output = CrowdsClassificationCModelSingleWeight(N_CLASSES, N_ANNOT, conn_type="MW")([last_hidden, baseline_output])
+    channel_layer = CrowdsClassificationCModelSingleWeight(N_CLASSES, N_ANNOT, conn_type="MW")
 elif model == 'MW+B':
-    channeled_output = CrowdsClassificationCModel(N_CLASSES, N_ANNOT, conn_type="MW")([last_hidden, baseline_output])
+    channel_layer = CrowdsClassificationCModel(N_CLASSES, N_ANNOT, conn_type="MW")
 else:
     raise Exception("Unknown type for CrowdsClassification layer!")
+
+channeled_output = channel_layer([last_hidden, baseline_output])
+channel_matrix = channel_layer.get_channel_matrix()
 
 crowd_model = Model(inputs=train_inputs, outputs=[channeled_output, baseline_output])
 
 loss = MaskedMultiCrossEntropy().loss
 
-# compile model with masked loss and train
-crowd_model.compile(optimizer='adam',
-                     loss=[loss,'categorical_crossentropy'],
-                     loss_weights=[1,0],
-                     metrics=['accuracy']
-                    )
+for b in [1, 0.1, 0.01, 0.001]:
+    curr_loss = MaskedMultiCrossEntropyCurriculumChannelMatrix(channel_matrix, 0.1, 0.1).loss
 
-eval(crowd_model,y_test=[answers_test_bin_missings,labels_test_bin])
+    # compile model with masked loss and train
+    crowd_model.compile(optimizer='adam',
+                         loss=[curr_loss, 'categorical_crossentropy'],
+                         loss_weights=[1, 0],
+                         metrics=['accuracy']
+                        )
+    eval(crowd_model,y_test=[answers_test_bin_missings, labels_test_bin])
+    crowd_model.fit(data_train_vgg16, [answers_bin_missings, labels_train_bin], epochs=1, shuffle=True, batch_size=BATCH_SIZE, verbose=1)
+    print(K.eval(channel_matrix))
+    eval(crowd_model,y_test=[answers_test_bin_missings, labels_test_bin])
 
-crowd_model.fit(data_train_vgg16, [answers_bin_missings, labels_train_bin], epochs=N_EPOCHS, shuffle=True, batch_size=BATCH_SIZE, verbose=1)
-
-eval(crowd_model,y_test=[answers_test_bin_missings,labels_test_bin])
+    channel_matrix = channel_layer.get_channel_matrix()
+    curr_loss = MaskedMultiCrossEntropyCurriculumChannelMatrix(channel_matrix, 0.1, 0.1).loss
+    crowd_model.fit(data_train_vgg16, [answers_bin_missings, labels_train_bin], epochs=1, shuffle=True, batch_size=BATCH_SIZE, verbose=1)
+    print(K.eval(channel_matrix))
+    eval(crowd_model,y_test=[answers_test_bin_missings, labels_test_bin])

@@ -13,7 +13,8 @@ import keras as keras
 
 # packages for learning from crowds
 from crowd_layer.crowd_layers import CrowdsClassification, MaskedMultiCrossEntropy, CrowdsClassificationSModel, \
-    CrowdsClassificationCModelSingleWeight, CrowdsClassificationCModel
+    CrowdsClassificationCModelSingleWeight, CrowdsClassificationCModel, MaskedMultiCrossEntropyCosSim, \
+    MaskedMultiCrossEntropyBaseChannel, MaskedMultiCrossEntropyBaseChannelConst
 from crowd_layer.crowd_aggregators import CrowdsCategoricalAggregator
 
 
@@ -23,11 +24,11 @@ config.gpu_options.allow_growth=True
 sess = tf.Session(config=config)
 
 model = 'B'
-NUM_RUNS = 20
+NUM_RUNS = 30
 DATA_PATH = "/Users/yangyajing/Documents/noisy_dataset/LabelMe/prepared/"
 N_CLASSES = 8
 BATCH_SIZE = 64
-N_EPOCHS = 30
+N_EPOCHS = 15
 W = 0
 
 
@@ -150,16 +151,96 @@ else:
 crowd_model = Model(inputs=train_inputs, outputs=[channeled_output, baseline_output])
 
 loss = MaskedMultiCrossEntropy().loss
+cos_sim_loss = MaskedMultiCrossEntropyCosSim(baseline_output).loss
+base_channel_loss = MaskedMultiCrossEntropyBaseChannel(baseline_output).loss
+base_channel_loss_const_025 = MaskedMultiCrossEntropyBaseChannelConst(baseline_output, 0.25).loss
+base_channel_loss_const_05 = MaskedMultiCrossEntropyBaseChannelConst(baseline_output, 0.5).loss
+base_channel_loss_const_075 = MaskedMultiCrossEntropyBaseChannelConst(baseline_output, 0.75).loss
+base_channel_loss_const_1 = MaskedMultiCrossEntropyBaseChannelConst(baseline_output, 1).loss
+base_channel_loss_const_125 = MaskedMultiCrossEntropyBaseChannelConst(baseline_output, 1.25).loss
+base_channel_loss_const_15 = MaskedMultiCrossEntropyBaseChannelConst(baseline_output, 1.5).loss
 
 # compile model with masked loss and train
 crowd_model.compile(optimizer='adam',
-                     loss=[loss,'categorical_crossentropy'],
+                     loss=[loss, 'categorical_crossentropy'],
+                     loss_weights=[1, 0],
+                     metrics=['accuracy']
+                    )
+
+eval(crowd_model,y_test=[answers_test_bin_missings, labels_test_bin])
+
+crowd_model.fit(data_train_vgg16, [answers_bin_missings, labels_train_bin], epochs=5, shuffle=True, batch_size=BATCH_SIZE, verbose=1)
+
+eval(crowd_model,y_test=[answers_test_bin_missings, labels_test_bin])
+
+
+crowd_model.compile(optimizer='adam',
+                     loss=[base_channel_loss_const_025,'categorical_crossentropy'],
                      loss_weights=[1,0],
                      metrics=['accuracy']
                     )
 
-eval(crowd_model,y_test=[answers_test_bin_missings,labels_test_bin])
-
-crowd_model.fit(data_train_vgg16, [answers_bin_missings, labels_train_bin], epochs=N_EPOCHS, shuffle=True, batch_size=BATCH_SIZE, verbose=1)
+crowd_model.fit(data_train_vgg16, [answers_bin_missings, labels_train_bin], epochs=5, shuffle=True, batch_size=BATCH_SIZE, verbose=1)
 
 eval(crowd_model,y_test=[answers_test_bin_missings,labels_test_bin])
+
+
+
+crowd_model.compile(optimizer='adam',
+                     loss=[base_channel_loss_const_05,'categorical_crossentropy'],
+                     loss_weights=[1,0],
+                     metrics=['accuracy']
+                    )
+
+crowd_model.fit(data_train_vgg16, [answers_bin_missings, labels_train_bin], epochs=5, shuffle=True, batch_size=BATCH_SIZE, verbose=1)
+
+eval(crowd_model,y_test=[answers_test_bin_missings,labels_test_bin])
+
+
+
+crowd_model.compile(optimizer='adam',
+                     loss=[base_channel_loss_const_075,'categorical_crossentropy'],
+                     loss_weights=[1,0],
+                     metrics=['accuracy']
+                    )
+
+crowd_model.fit(data_train_vgg16, [answers_bin_missings, labels_train_bin], epochs=5, shuffle=True, batch_size=BATCH_SIZE, verbose=1)
+
+eval(crowd_model,y_test=[answers_test_bin_missings,labels_test_bin])
+
+
+
+crowd_model.compile(optimizer='adam',
+                     loss=[base_channel_loss_const_1,'categorical_crossentropy'],
+                     loss_weights=[1,0],
+                     metrics=['accuracy']
+                    )
+
+crowd_model.fit(data_train_vgg16, [answers_bin_missings, labels_train_bin], epochs=5, shuffle=True, batch_size=BATCH_SIZE, verbose=1)
+
+eval(crowd_model,y_test=[answers_test_bin_missings,labels_test_bin])
+
+
+
+crowd_model.compile(optimizer='adam',
+                     loss=[base_channel_loss_const_125,'categorical_crossentropy'],
+                     loss_weights=[1,0],
+                     metrics=['accuracy']
+                    )
+
+crowd_model.fit(data_train_vgg16, [answers_bin_missings, labels_train_bin], epochs=5, shuffle=True, batch_size=BATCH_SIZE, verbose=1)
+
+eval(crowd_model,y_test=[answers_test_bin_missings,labels_test_bin])
+
+
+
+crowd_model.compile(optimizer='adam',
+                     loss=[base_channel_loss_const_15,'categorical_crossentropy'],
+                     loss_weights=[1,0],
+                     metrics=['accuracy']
+                    )
+
+crowd_model.fit(data_train_vgg16, [answers_bin_missings, labels_train_bin], epochs=5, shuffle=True, batch_size=BATCH_SIZE, verbose=1)
+
+eval(crowd_model,y_test=[answers_test_bin_missings,labels_test_bin])
+
