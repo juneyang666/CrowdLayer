@@ -2,6 +2,7 @@ from keras.applications.resnet50 import ResNet50
 from keras.preprocessing import image
 from keras.applications.resnet50 import preprocess_input, decode_predictions
 import numpy as np
+import pandas as pd
 
 import tensorflow as tf
 from keras.models import Sequential, Model
@@ -26,7 +27,7 @@ sess = tf.Session(config=config)
 
 model = 'B'
 NUM_RUNS = 30
-DATA_PATH = "/Users/yangyajing/Documents/noisy_dataset/LabelMe/prepared/"
+DATA_PATH = "/home/yajingyang/Downloads/LabelMe/prepared/"
 N_CLASSES = 8
 BATCH_SIZE = 64
 N_EPOCHS = 20
@@ -129,35 +130,92 @@ def eval(model,y_test):
     print('Test dataset results: ')
     print(dict(zip(model.metrics_names,model.evaluate(data_test_vgg16,y_test, verbose=False))))
 
-hidden_layers = Sequential()
-hidden_layers.add(Flatten(input_shape=data_train_vgg16.shape[1:]))
-hidden_layers.add(Dense(128, activation='relu'))
-hidden_layers.add(Dropout(0.5))
-hidden_layers.add(Dense(64, activation='relu'))
-hidden_layers.add(Dropout(0.5))
 
-train_inputs = Input(shape=(data_train_vgg16.shape[1:]))
-last_hidden = hidden_layers(train_inputs)
-baseline_output = Dense(N_CLASSES, activation='softmax', name='baseline')(last_hidden)
+def print_trace(model):
 
-if model == 'B':
-    channel_layer = CrowdsClassificationSModelChannelMatrix(N_CLASSES, N_ANNOT)
-elif model == 'SW+B':
-    channel_layer = CrowdsClassificationCModelSingleWeight(N_CLASSES, N_ANNOT, conn_type="MW")
-elif model == 'MW+B':
-    channel_layer = CrowdsClassificationCModel(N_CLASSES, N_ANNOT, conn_type="MW")
-else:
-    raise Exception("Unknown type for CrowdsClassification layer!")
+    channel_matrix = model.get_weights()[-1]
+    channel_matrix_trace = tf.trace(K.permute_dimensions(channel_matrix, [2, 0, 1]))
+    print(K.eval(channel_matrix_trace))
+    return
 
-channeled_output = channel_layer([last_hidden, baseline_output])
-channel_matrix = channel_layer.get_channel_matrix()
 
-crowd_model = Model(inputs=train_inputs, outputs=[channeled_output, baseline_output])
+def print_single_loss(model):
+    import matplotlib.pyplot as plt
 
-loss = MaskedMultiCrossEntropy().loss
+    # list all data in history
+    print(model.history.keys())
+    # summarize history for accuracy
+    plt.plot(model.history['baseline_acc'])
+    plt.title('model accuracy')
+    plt.ylabel('accuracy')
+    plt.xlabel('epoch')
+    plt.show()
+    # summarize history for loss
+    plt.plot(model.history['baseline_loss'])
+    plt.title('model loss')
+    plt.ylabel('loss')
+    plt.xlabel('epoch')
+    plt.show()
 
-for b in [1, 0.1, 0.01, 0.001]:
-    curr_loss = MaskedMultiCrossEntropyCurriculumChannelMatrix(channel_matrix, 0.1, 0.1).loss
+
+def print_history(df, title):
+    import matplotlib.pyplot as plt
+    # Make a data frame
+    df['x'] = range(df.shape[0])
+
+    # style
+    plt.style.use('seaborn-darkgrid')
+
+    # create a color palette
+    palette = plt.get_cmap('Set1')
+
+    # multiple line plot
+    num = 0
+    for column in df.drop('x', axis=1):
+        num += 1
+        plt.plot(df['x'], df[column], marker='', color=palette(num), linewidth=1, alpha=0.9, label=column)
+
+    # Add legend
+    plt.legend(loc=2, ncol=2)
+
+    # Add titles
+    plt.title(title, loc='left', fontsize=12, fontweight=0, color='orange')
+    plt.xlabel("Time")
+    plt.ylabel("Score")
+    plt.savefig(title+'.png')
+
+
+acc_df = pd.DataFrame()
+loss_df = pd.DataFrame()
+
+for b in [0, 1, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.07, 0.05, 0.03, 0.01,
+          0.007, 0.005, 0.001]:
+
+    hidden_layers = Sequential()
+    hidden_layers.add(Flatten(input_shape=data_train_vgg16.shape[1:]))
+    hidden_layers.add(Dense(128, activation='relu'))
+    hidden_layers.add(Dropout(0.5))
+    hidden_layers.add(Dense(64, activation='relu'))
+    hidden_layers.add(Dropout(0.5))
+
+    train_inputs = Input(shape=(data_train_vgg16.shape[1:]))
+    last_hidden = hidden_layers(train_inputs)
+    baseline_output = Dense(N_CLASSES, activation='softmax', name='baseline')(last_hidden)
+
+    if model == 'B':
+        channel_layer = CrowdsClassificationSModelChannelMatrix(N_CLASSES, N_ANNOT)
+    elif model == 'SW+B':
+        channel_layer = CrowdsClassificationCModelSingleWeight(N_CLASSES, N_ANNOT, conn_type="MW")
+    elif model == 'MW+B':
+        channel_layer = CrowdsClassificationCModel(N_CLASSES, N_ANNOT, conn_type="MW")
+    else:
+        raise Exception("Unknown type for CrowdsClassification layer!")
+
+    channeled_output = channel_layer([last_hidden, baseline_output])
+
+    crowd_model = Model(inputs=train_inputs, outputs=[channeled_output, baseline_output])
+
+    curr_loss = MaskedMultiCrossEntropyCurriculumChannelMatrix(crowd_model, 1, b).loss
 
     # compile model with masked loss and train
     crowd_model.compile(optimizer='adam',
@@ -165,13 +223,15 @@ for b in [1, 0.1, 0.01, 0.001]:
                          loss_weights=[1, 0],
                          metrics=['accuracy']
                         )
-    eval(crowd_model,y_test=[answers_test_bin_missings, labels_test_bin])
-    crowd_model.fit(data_train_vgg16, [answers_bin_missings, labels_train_bin], epochs=1, shuffle=True, batch_size=BATCH_SIZE, verbose=1)
-    print(K.eval(channel_matrix))
-    eval(crowd_model,y_test=[answers_test_bin_missings, labels_test_bin])
 
-    channel_matrix = channel_layer.get_channel_matrix()
-    curr_loss = MaskedMultiCrossEntropyCurriculumChannelMatrix(channel_matrix, 0.1, 0.1).loss
-    crowd_model.fit(data_train_vgg16, [answers_bin_missings, labels_train_bin], epochs=1, shuffle=True, batch_size=BATCH_SIZE, verbose=1)
-    print(K.eval(channel_matrix))
-    eval(crowd_model,y_test=[answers_test_bin_missings, labels_test_bin])
+    eval(crowd_model, y_test=[answers_test_bin_missings, labels_test_bin])
+    print_trace(crowd_model)
+    history = crowd_model.fit(data_train_vgg16, [answers_bin_missings, labels_train_bin], epochs=35, shuffle=True,
+                              batch_size=BATCH_SIZE, verbose=1)
+    print_trace(crowd_model)
+    eval(crowd_model, y_test=[answers_test_bin_missings, labels_test_bin])
+    acc_df.loc[:, str(b)] = history.history['baseline_acc']
+    loss_df.loc[:, str(b)] = history.history['baseline_loss']
+
+print_history(acc_df, 'accuracy')
+print_history(loss_df, 'loss')
