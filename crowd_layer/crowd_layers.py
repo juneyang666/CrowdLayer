@@ -272,8 +272,8 @@ class MaskedMultiCrossEntropyCurriculum(object):
 
 class MaskedMultiCrossEntropyCurriculumChannelMatrix(object):
 
-    def __init__(self, t, a, b):
-        self.t = t
+    def __init__(self, model, a, b):
+        self.t = tf.transpose(model.get_weights()[-1], perm=[2, 0, 1])
         self.a = a
         self.b = b
 
@@ -282,15 +282,13 @@ class MaskedMultiCrossEntropyCurriculumChannelMatrix(object):
         vec = tf.nn.softmax_cross_entropy_with_logits(logits=y_pred, labels=y_true, dim=1)
         # vec_base_channel = tf.nn.softmax_cross_entropy_with_logits(logits=y_pred, labels=self.y_pred_broad, dim=1)
         trace = tf.trace(self.t)
-        print('vec: ', vec)
-        print('trace: ', trace)
-        vec = vec + trace * self.b
 
+        vec = vec - trace * self.b
         mask = tf.equal(y_true[:,0,:], -1)
-
         zer = tf.zeros_like(vec)
         loss = tf.where(mask, x=zer, y=vec)
         return loss
+
 
 class MaskedMultiMSE(object):
 
