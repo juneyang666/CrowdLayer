@@ -233,5 +233,7 @@ for b in [0, 1, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.07, 0.05, 0.03, 0
     acc_df.loc[:, str(b)] = history.history['baseline_acc']
     loss_df.loc[:, str(b)] = history.history['baseline_loss']
 
+acc_df.to_csv('accuracy.csv')
+loss_df.to_csv('loss.csv')
 print_history(acc_df, 'accuracy')
 print_history(loss_df, 'loss')
